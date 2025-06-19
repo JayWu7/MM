@@ -3,6 +3,7 @@ import os
 import asyncio
 from collections import deque
 import argparse
+from colorama import init, Fore
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -14,6 +15,7 @@ from hedge.hedge import Hedge
 from configs.auth import *
 from init_config import validate_and_load_config
 
+init(autoreset=True)
 
 class MarketMakerRunner():
     def __init__(self, 
@@ -21,6 +23,7 @@ class MarketMakerRunner():
                  quote_token: str,
                  marketplace: str,
                  hedge_marketplace: str,
+                 mm_update_interval: int,
                  mm_price_up_pct_limit: float,
                  mm_price_down_pct_limit: float,
                  mm_bin_step: int, 
@@ -60,6 +63,7 @@ class MarketMakerRunner():
             self.symbol = f'{underlying_token}{quote_token}'
             self.feed = BnFeedsConnector(self.token)
         
+        self.mm_update_interval = mm_update_interval
         self.mm_price_up_pct_limit = mm_price_up_pct_limit
         self.mm_price_down_pct_limit = mm_price_down_pct_limit
         self.mm_bin_step = mm_bin_step
@@ -102,8 +106,7 @@ class MarketMakerRunner():
         self.quote_amount = mm_init_quote_amount
         self.iqv_move_ratio = None
 
-        self.bids_oid = []
-        self.asks_oid = []
+        self.oids = [] # OrderIds list
 
         self.is_closed = False
 
@@ -215,20 +218,64 @@ class MarketMakerRunner():
             if self._price_security_check():
                 self.vol_his_price.append(self.mid_price)
                 self.vol_client.update(self.vol_his_price)
-                self.vol = self.vol_client
+                self.vol = self.vol_client.vol
+                if self.mm_mode == 'auto_mode':
+                    self.mm_client.vol = self.vol
 
             await asyncio.sleep(self.vol_his_price_window)
     
     async def mm(self):
-        while True:
-            # Calculate Bins Status / Cancel Bins
-            self.mm_client.compute_current_bins(current_price=self.mid_price, cur_inventory_amount=self.inventory_amount, 
-                                                cur_quote_amount=self.quote_amount)
+        round_index = 0
+        while not self.is_closed:
+            # Step 1, Cancel current orders if exists
+            self.ex_client.cancel_all_spot_orders(symbol=self.symbol)
+            # Step 2, Query all orders information if exists
+            if len(self.oids) > 0:
+                filled_status = self.ex_client.batch_query_orders(symbol=self.symbol, orders=self.oids)
+            # Step 3, Calculate current mm round position updates from filled orders
+                if len(filled_status) > 0:
+                    ic = qc = 0
+                    for _, order_info in filled_status.items():
+                        side, size, quote_size = order_info
+                        if side == 'BUY':
+                            ic += size
+                            qc -= quote_size
+                        else:
+                            ic -= size
+                            qc += quote_size
+            # Step 4, Summary current round position updates
+                    self.inventory_amount += ic
+                    self.quote_amount += qc
+                    round_avg_price = abs(qc / ic) if abs(ic) > 0 else 0
+                    if ic > 0:
+                        print(Fore.GREEN + f'Round {round_index}: Buy {ic} {self.token} with Average Price: {round_avg_price}, Current Inventory Amount: {self.inventory_amount}, Current Quote Amount: {self.quote_amount}')
+                    elif ic < 0:
+                        print(Fore.GREEN + f'Round {round_index}: Sell {ic} {self.token} with Average Price: {round_avg_price}, Current Inventory Amount: {self.inventory_amount}, Current Quote Amount: {self.quote_amount}')
+                    else:
+                        print(Fore.BLACK + f'Round {round_index}: No Inventory Changes, Current Inventory Amount: {self.inventory_amount}, Current Quote Amount: {self.quote_amount}')
+                else:
+                    print(Fore.BLACK + f'Round {round_index}: No Executed Orders, Current Inventory Amount: {self.inventory_amount}, Current Quote Amount: {self.quote_amount}') 
+            # Step 5, Compute latest bins based on current position and volatility
+            self.mm_client.compute_current_bins(current_price=self.mid_price, cur_inventory_amount=self.inventory_amount, cur_quote_amount=self.quote_amount)   
             self.iqv_move_ratio = self.mm_client.iqv_move_ratio
-            # Send fresh bins
             self.hedge_client.update_portfolio_status(current_price=self.aggr_price, cur_inventory_amount=self.inventory_amount, 
                                                       cur_quote_amount=self.quote_amount, iqv_move_ratio=self.iqv_move_ratio)
-            await asyncio.sleep(10)
+            bins = self.mm_client.bins
+            # Step 6, Generate next round orders and batch send
+            nr_orders = []
+            for ask_bin, bid_bin in zip(bins['asks'], bins['bids']):
+                ask_price, ask_size = ask_bin
+                bid_price, bid_size = bid_bin
+
+                nr_orders.append(['SELL', ask_size, ask_price])
+                nr_orders.append(['BUY', bid_size, bid_price])
+
+                if len(nr_orders) >= self.mm_live_order_nums:
+                    break
+            self.oids = await self.ex_client.batch_put_spot_limit_orders(symbol=self.symbol, orders=nr_orders, gtx_only=True)
+            round_index += 1
+            
+            await asyncio.sleep(self.mm_update_interval)
 
     async def main(self):
         _tasks = [
