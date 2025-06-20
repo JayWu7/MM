@@ -1,4 +1,4 @@
-from strategy_base import StrategyBase
+from strategy_base import StrategyBase, logger
 
 class AutoMode(StrategyBase):
     def __init__(self, 
@@ -25,7 +25,7 @@ class AutoMode(StrategyBase):
                          init_inventory_amount, init_quote_amount, live_order_nums, min_order_size, max_order_size, 
                             iqv_up_limit, iqv_down_limit, inventory_rb_iqv_ratio, quote_rb_iqv_ratio)
         
-        self.strategy_name = 'Curve Mode Market-Maker Strategy'
+        self.strategy_name = 'Auto Mode Market-Maker Strategy'
         self.vol_lower_threshold = vol_lower_threshold
         self.vol_upper_threshold = vol_upper_threshold
         self.vol = init_vol

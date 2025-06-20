@@ -1,4 +1,4 @@
-from strategy_base import StrategyBase
+from strategy_base import StrategyBase, logger
 
 class Spot(StrategyBase):
     def __init__(self, 
@@ -13,7 +13,6 @@ class Spot(StrategyBase):
                  live_order_nums: int = 100, 
                  min_order_size: float = 0, 
                  max_order_size: float = 1e18, 
-                 update_interval: int = 10, 
                  iqv_up_limit: float = 0.6, 
                  iqv_down_limit: float = -0.6, 
                  inventory_rb_iqv_ratio: float = 0.3, 
@@ -21,7 +20,7 @@ class Spot(StrategyBase):
         
         super().__init__(underlying_asset, quote_asset, init_price, price_up_pct_limit, price_down_pct_limit, bin_step, 
                          init_inventory_amount, init_quote_amount, live_order_nums, min_order_size, max_order_size, 
-                         update_interval, iqv_up_limit, iqv_down_limit, inventory_rb_iqv_ratio, quote_rb_iqv_ratio)
+                         iqv_up_limit, iqv_down_limit, inventory_rb_iqv_ratio, quote_rb_iqv_ratio)
         
         self.strategy_name = 'Spot Mode Market-Maker Strategy'
 

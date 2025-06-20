@@ -1,4 +1,6 @@
+import logging
 
+logger = logging.getLogger(__name__)
 
 class StrategyBase():
     def __init__(self, 
@@ -13,7 +15,6 @@ class StrategyBase():
                  live_order_nums: int = 100,
                  min_order_size: float = 0.0,
                  max_order_size: float = 1e18,
-                 update_interval: int = 10, 
                  iqv_up_limit: float = 0.6, 
                  iqv_down_limit: float = -0.6, 
                  inventory_rb_iqv_ratio: float = 0.3, 
@@ -59,19 +60,16 @@ class StrategyBase():
             max_order_size: float = 1e18,
                 The maximum order size allowed by the strategy. Orders above this size will be clipped to 
                 avoid risk or violation of exchange limits.
-
-            update_interval : int
-                Time interval (in seconds) to refresh and update the quoting orders.
             
             iqv_up_limit : float
                 Upper threshold for relative IQV movement (as a percentage of init_iqv_ratio).
                 If the IQV has increased by more than this ratio from its initial value, stop buying.
-                Formula: (iqv_ratio - init_iqv_ratio) / init_iqv_ratio >= iqv_up_limit
+                Formula: (iqv_ratio - init_iqv_ratio) / init_iqv_ratio <= iqv_up_limit
             
             iqv_down_limit : float
                 Lower threshold for relative IQV movement (as a percentage of init_iqv_ratio).
                 If the IQV has decreased by more than this ratio from its initial value, stop selling.
-                Formula: (iqv_ratio - init_iqv_ratio) / init_iqv_ratio <= iqv_down_limit
+                Formula: (iqv_ratio - init_iqv_ratio) / init_iqv_ratio >= iqv_down_limit
             
             inventory_rb_iqv_ratio : float
                 Rebalance threshold (relative change) for reducing buy order size.
@@ -83,8 +81,8 @@ class StrategyBase():
             
         '''
         self.strategy_name = 'Base MM Strategy'
-        self.underlying_asset = underlying_asset.strip.upper()
-        self.quote_asset = quote_asset.strip.upper()
+        self.underlying_asset = underlying_asset.strip().upper()
+        self.quote_asset = quote_asset.strip().upper()
         self.symbol = self.underlying_asset + self.quote_asset
 
         self.init_inventory_amount = init_inventory_amount
@@ -112,7 +110,6 @@ class StrategyBase():
         self.live_order_nums = live_order_nums
         self.min_order_size = min_order_size
         self.max_order_size = max_order_size 
-        self.update_interval = update_interval
         self.iqv_up_limit = iqv_up_limit
         self.iqv_down_limit = iqv_down_limit
         self.inventory_rb_iqv_ratio = inventory_rb_iqv_ratio
