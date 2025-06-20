@@ -13,7 +13,6 @@ logger = logging.getLogger(__name__)
 class Hyperliquid(Exchange):
     def __init__(self, api_key: str, secret_key: str):
         super().__init__('Hyperliquid', api_key, secret_key)
-        # Initialize Hyperliquid-specific client
         account: LocalAccount = eth_account.Account.from_key(self._secret)
         self._key = account.address
         self.perp_client = HypeEx(account, account_address=self._key)
@@ -103,7 +102,6 @@ class Hyperliquid(Exchange):
         symbol = symbol.strip().upper()
         try:
             all_fills = self.info.user_fills_by_time(address=self._key, start_time=int((time.time()- query_start_time ) * 1000))
-            # Create a lookup dict for quick access by orderId
             fill_map = {str(o['oid']): o for o in all_fills}
             for order_id in orders:
                 status = fill_map.get(str(order_id))
