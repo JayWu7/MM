@@ -19,6 +19,8 @@ class VolatilityEstimator:
         self.ewma_lambda = ewma_lambda
         self.ewma_vol_squared = 0.0
 
+        self.vol = None
+
     def update(self, price_series: list[float]) -> dict:
         """
         Update and compute the current volatility using the input price series.
@@ -54,6 +56,8 @@ class VolatilityEstimator:
         ewma_vol = np.sqrt(self.ewma_vol_squared) * np.sqrt(60)
 
         effective_vol = 0.3 * short_vol + 0.4 * ewma_vol + 0.3 * long_vol
+
+        self.vol = effective_vol
 
         return {
             "short_vol": short_vol,
