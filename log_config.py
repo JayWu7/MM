@@ -5,7 +5,7 @@ from logging.handlers import RotatingFileHandler
 from colorama import init, Fore
 from datetime import datetime
 
-init(autoreset=True)  # 自动还原颜色
+init(autoreset=True)
 
 LOG_LEVELS = {
     'debug': logging.DEBUG,
