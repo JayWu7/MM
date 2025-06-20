@@ -51,6 +51,7 @@ def validate_and_load_config(file_name: str) -> dict:
     assert 0 < paras.MM_PRICE_UP_PCT_LIMIT < 1
     assert 0 < paras.MM_PRICE_DOWN_PCT_LIMIT < 1
     config.update({
+        "mm_update_interval": paras.MM_UPDATE_INTERVAL,
         "mm_price_up_pct_limit": paras.MM_PRICE_UP_PCT_LIMIT,
         "mm_price_down_pct_limit": paras.MM_PRICE_DOWN_PCT_LIMIT,
         "mm_bin_step": paras.MM_BIN_STEP,
