@@ -1,16 +1,19 @@
 import asyncio
+import logging
 from binance.spot import Spot as BNSpot
 from binance.um_futures import UMFutures
 
 from exchange_base import Exchange
 from binance_settings import tick_size, step_size
 
-class Binance(Exchange):
+logger = logging.getLogger(__name__)
+
+class BN(Exchange):
     def __init__(self, api_key: str, secret_key: str):
         super().__init__('Binance', api_key, secret_key)
         # Initialize Binance-specific client
-        self.spot_client = BNSpot(api_key=self.__key, api_secret=self.__secret)
-        self.perp_client = UMFutures(key=self.__key, secret=self.__secret)
+        self.spot_client = BNSpot(api_key=self._key, api_secret=self._secret)
+        self.perp_client = UMFutures(key=self._key, secret=self._secret)
     
     async def put_spot_limit_order(self, symbol: str, side: str, quantity: float, price: float, gtx_only: bool = False) -> tuple[bool, str]:
         try:
@@ -29,7 +32,7 @@ class Binance(Exchange):
 
             return True, str(order_id)
         except Exception as e:
-            return False, f'Error met in {self.exchange_name} put_perp_limit_order: {e}' 
+            return False, f'Error met in {self.exchange_name} put_spot_limit_order: {e}' 
     
 
     async def batch_put_spot_limit_orders(self, symbol: str, orders: list, gtx_only: bool) -> list:
@@ -79,7 +82,7 @@ class Binance(Exchange):
         try:
             all_orders = self.spot_client.get_orders(symbol=symbol, limit=limit)
         except Exception as e:
-            print(f'Failed to fetch orders for {symbol}: {e}')
+            logger.error('Failed to fetch orders for {symbol}: {e}')
             return dict()
 
         # Create a lookup dict for quick access by orderId
@@ -97,7 +100,6 @@ class Binance(Exchange):
 
         return result
 
-    
     async def cancel_all_spot_orders(self, symbol: str) -> bool:
         try:
             symbol = symbol.strip().upper()
@@ -107,8 +109,9 @@ class Binance(Exchange):
             else:
                 return False
         except Exception as e:
-            print(f'Error met in {self.exchange_name} cancel_all_spot_orders: {e}' )
-
+            logger.error(f'Error met in {self.exchange_name} cancel_all_spot_orders: {e}')
+            return False
+            
     async def put_perp_limit_order(self, symbol: str, side: str, quantity: float, price: float) -> str:
         try:
             symbol = symbol.strip().upper()
@@ -180,10 +183,10 @@ class Binance(Exchange):
                     init_balance = float(init_positions[0]['positionAmt'])
                 break
             except Exception as e:
-                print(f'Fetch init balance met error: {e}, retry')
+                logger.warning(f'Fetch init balance met error: {e}, retry')
                 await asyncio.sleep(1)
         else:
-            print(f'Fetch init balance failed after 5 times, failed GTX {side}.')
+            logger.error(f'Fetch init balance failed after 5 times, failed GTX {side}.')
             return unfilled_amount
         
         while True:
@@ -193,17 +196,15 @@ class Binance(Exchange):
                 gtx_price = float(ob['bids'][0][0])
             else:
                 gtx_price = float(ob['asks'][0][0])
-            print(gtx_price)
             try:
                 # send gtx order 
                 response = self.perp_client.new_order(symbol=symbol, side=side, type='LIMIT', quantity=unfilled_amount, timeInForce="GTX", price=gtx_price)
-                print(response)
                 order_id = response['orderId']
                 # wait 3 seconds and cancel the order
                 await asyncio.sleep(3)
                 self.perp_client.cancel_order(symbol=symbol, orderId=order_id)
             except Exception as e:
-                print('Send GTX limit order or cancel order failed, sleep 1 second and retry.')
+                logger.warning('Send GTX limit order or cancel order failed, sleep 1 second and retry.')
                 await asyncio.sleep(1)
             # check current position, update unfilled quantity
             for _ in range(5):
@@ -219,40 +220,40 @@ class Binance(Exchange):
                         unfilled_amount = quantity - (init_balance - cur_balance)
                     break
                 except Exception as e:
-                    print(f'Fetch current balance met error: {e}, retry')
+                    logger.warning(f'Fetch current balance met error: {e}, retry')
                     await asyncio.sleep(1)
             else:
-                print(f'Fetch current balance failed after 5 times, failed GTX {side}.')
+                logger.error(f'Fetch current balance failed after 5 times, failed GTX {side}.')
                 return unfilled_amount
 
             if unfilled_amount <= 0.000000001:
-                print(f'Successfully complete the GTX order after {try_times} tries')
+                logger.info(f'Successfully complete the GTX order after {try_times} tries')
                 return True, 0
             else:
-                print(f'Complete the {try_times} try, current filled status: {quantity - unfilled_amount}/{quantity}.')
+                logger.info(f'Complete the {try_times} try, current filled status: {quantity - unfilled_amount}/{quantity}.')
             
             await asyncio.sleep(1)
 
             if try_times >= max_try:
-                print(f'Failed to fill the GTX order after {max_try} tries, current filled status: {quantity - unfilled_amount}/{quantity}.')
+                logger.warning(f'Failed to fill the GTX order after {max_try} tries, current filled status: {quantity - unfilled_amount}/{quantity}.')
                 return unfilled_amount
 
         # todo: Calculate GTX average filled price
     
-    def query_perp_order_status(self, symbol: str, orderId: int) -> dict:
+    async def query_perp_order_status(self, symbol: str, orderId: int) -> dict:
         try:
             order_status = self.perp_client.query_order(symbol=symbol, orderId=orderId)
             return order_status
         except Exception as e:
-            print(f'Query Order {orderId} status met error: {e}.')
+            logger.error(f'Query Order {orderId} status met error: {e}.')
     
-    def cancel_perp_order(self, symbol: str, orderId: int) -> bool:
+    async def cancel_perp_order(self, symbol: str, orderId: int) -> bool:
         try:
             order_status = self.perp_client.cancel_order(symbol=symbol, orderId=orderId)
             is_canceled = True if order_status['status'] == 'CANCELED' else False
             return is_canceled
         except Exception as e:
-            print(f'Cancel Order {orderId} met error: {e}.')
+            logger.error(f'Cancel Order {orderId} met error: {e}.')
         
 
 
