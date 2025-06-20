@@ -1,6 +1,7 @@
 import sys
 import os
 import asyncio
+import time
 from collections import deque
 import argparse
 from colorama import init, Fore
@@ -8,9 +9,9 @@ from colorama import init, Fore
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from feeds.historical import bn_klines_close_price
-from feeds.live import BnFeedsConnector
+from feeds.live import BnFeedsConnector, HypeFeedsConnector
 from strategies import Spot, Curve, BidAsk, AutoMode, VolatilityEstimator
-from exchange import BN
+from exchange import BN, Hyperliquid
 from hedge.hedge import Hedge
 from configs.auth import *
 from init_config import validate_and_load_config
@@ -61,7 +62,14 @@ class MarketMakerRunner():
 
         if marketplace == 'binance_spot':
             self.symbol = f'{underlying_token}{quote_token}'
-            self.feed = BnFeedsConnector(self.token)
+            self.hedge_symbol = self.symbol
+            self.feed = BnFeedsConnector(self.symbol)
+        elif marketplace == 'hyperliquid':
+            self.symbol = self.token
+            self.hedge_symbol = f'{underlying_token}{quote_token}'
+            self.feed = HypeFeedsConnector(self.symbol)
+        else:
+            raise NotImplementedError
         
         self.mm_update_interval = mm_update_interval
         self.mm_price_up_pct_limit = mm_price_up_pct_limit
@@ -111,15 +119,13 @@ class MarketMakerRunner():
         self.is_closed = False
 
     
-    async def _live_price_monitor(self):
-        if self.marketplace == 'binance_spot':
-            _tasks = [
-                asyncio.create_task(self.feed.monitor_spot()),
-                asyncio.create_task(self.feed.monitor_spot_top_depth())
-            ]
-            await asyncio.gather(*_tasks)
-        else:
-            pass
+    async def live_price_monitor(self):
+        _tasks = [
+            asyncio.create_task(self.feed.monitor_spot()),
+            asyncio.create_task(self.feed.monitor_top_depth())
+        ]
+        await asyncio.gather(*_tasks)
+
 
     
     @property
@@ -135,7 +141,7 @@ class MarketMakerRunner():
         if aggr_price:
             return aggr_price
     
-    def _price_security_check(self) -> bool:
+    def price_security_check(self) -> bool:
         if not self.aggr_price or not self.mid_price:
             return False
         if abs((self.aggr_price - self.mid_price) / self.mid_price) < 0.02:
@@ -143,84 +149,98 @@ class MarketMakerRunner():
         else:
             return False
     
-    async def _initialize_clients(self) -> bool:
+    async def initialize_clients(self) -> bool:
             while not self.mid_price:
                 await asyncio.sleep(1)
             retry = 10
             while True:
                 if self.ex_client == None:
                     if self.marketplace == 'binance_spot':
-                        self.ex_client = BN(api_key=bn_api_key, secret_key=bn_secret_key).spot_client
+                        self.ex_client = BN(api_key=bn_api_key, secret_key=bn_secret_key)
+                        print(Fore.YELLOW + 'Successfully initialized Market-Maker Binance-Spot Trade Client.')
+                    elif self.marketplace == 'hyperliquid':
+                        self.ex_client = Hyperliquid(api_key=hype_pub_key, secret_key=hype_pri_key)
+                        print(Fore.YELLOW + 'Successfully initialized Market-Maker Hyperliquid Trade Client.')
+                    else:
+                        raise NotImplementedError
+
                 if self.hedge_ex_client == None:
                     if self.hedge_marketplace == 'binance_perp':
-                        self.hedge_client = BN(api_key=bn_api_key, secret_key=bn_secret_key).perp_client
+                        self.hedge_ex_client = BN(api_key=bn_api_key, secret_key=bn_secret_key)
+                        print(Fore.YELLOW + 'Successfully initialized Hedge Trade Client.')
                 if self.vol_client == None:
                     self.vol_client = VolatilityEstimator(short_window=self.vol_short_window, long_window=self.vol_long_window, ewma_lambda=self.vol_ewma_lambda)
+                    print(Fore.YELLOW + 'Successfully initialized Volatility Estimator Client.')
                 if self.mm_client == None:
-                    if self.mid_price and self._price_security_check():
+                    if self.mid_price and self.price_security_check():
                         if self.mm_mode == 'spot':
                             self.mm_client = Spot(underlying_asset=self.token, quote_asset=self.quote, init_price=self.mid_price, 
                                                   price_up_pct_limit=self.mm_price_up_pct_limit, price_down_pct_limit=self.mm_price_down_pct_limit, 
-                                                  bin_step=self.mm_bin_step, init_inventory_amount=self.mm_price_up_pct_limit, 
+                                                  bin_step=self.mm_bin_step, init_inventory_amount=self.mm_init_inventory_amount, 
                                                   init_quote_amount=self.mm_init_quote_amount, live_order_nums=self.mm_live_order_nums,
                                                   min_order_size=self.mm_min_order_size, max_order_size=self.mm_max_order_size,
                                                   iqv_up_limit=self.mm_iqv_up_limit, iqv_down_limit=self.mm_iqv_down_limit,
                                                   inventory_rb_iqv_ratio=self.mm_inventory_rb_iqv_ratio, quote_rb_iqv_ratio=self.mm_quote_rb_iqv_ratio)
+                            print(Fore.YELLOW + 'Successfully initialized Spot-Mode Market-Maker Client.')
                         elif self.mm_mode == 'curve':
                             self.mm_client = Curve(underlying_asset=self.token, quote_asset=self.quote, init_price=self.mid_price, 
                                                   price_up_pct_limit=self.mm_price_up_pct_limit, price_down_pct_limit=self.mm_price_down_pct_limit, 
-                                                  bin_step=self.mm_bin_step, init_inventory_amount=self.mm_price_up_pct_limit, 
+                                                  bin_step=self.mm_bin_step, init_inventory_amount=self.mm_init_inventory_amount, 
                                                   init_quote_amount=self.mm_init_quote_amount, live_order_nums=self.mm_live_order_nums,
                                                   min_order_size=self.mm_min_order_size, max_order_size=self.mm_max_order_size,
                                                   iqv_up_limit=self.mm_iqv_up_limit, iqv_down_limit=self.mm_iqv_down_limit,
                                                   inventory_rb_iqv_ratio=self.mm_inventory_rb_iqv_ratio, quote_rb_iqv_ratio=self.mm_quote_rb_iqv_ratio)
+                            print(Fore.YELLOW + 'Successfully initialized Curve-Mode Market-Maker Client.')
                         elif self.mm_mode == 'bid_ask':
                             self.mm_client = BidAsk(underlying_asset=self.token, quote_asset=self.quote, init_price=self.mid_price, 
                                                   price_up_pct_limit=self.mm_price_up_pct_limit, price_down_pct_limit=self.mm_price_down_pct_limit, 
-                                                  bin_step=self.mm_bin_step, init_inventory_amount=self.mm_price_up_pct_limit, 
+                                                  bin_step=self.mm_bin_step, init_inventory_amount=self.mm_init_inventory_amount, 
                                                   init_quote_amount=self.mm_init_quote_amount, live_order_nums=self.mm_live_order_nums,
                                                   min_order_size=self.mm_min_order_size, max_order_size=self.mm_max_order_size,
                                                   iqv_up_limit=self.mm_iqv_up_limit, iqv_down_limit=self.mm_iqv_down_limit,
                                                   inventory_rb_iqv_ratio=self.mm_inventory_rb_iqv_ratio, quote_rb_iqv_ratio=self.mm_quote_rb_iqv_ratio)
+                            print(Fore.YELLOW + 'Successfully initialized BidAsk-Mode Market-Maker Client.')
                         elif self.mm_mode == 'auto':
                             self.mm_client = AutoMode(underlying_asset=self.token, quote_asset=self.quote, init_price=self.mid_price, 
                                                   price_up_pct_limit=self.mm_price_up_pct_limit, price_down_pct_limit=self.mm_price_down_pct_limit, 
-                                                  bin_step=self.mm_bin_step, init_inventory_amount=self.mm_price_up_pct_limit, 
+                                                  bin_step=self.mm_bin_step, init_inventory_amount=self.mm_init_inventory_amount, 
                                                   init_quote_amount=self.mm_init_quote_amount, live_order_nums=self.mm_live_order_nums,
                                                   min_order_size=self.mm_min_order_size, max_order_size=self.mm_max_order_size,
                                                   iqv_up_limit=self.mm_iqv_up_limit, iqv_down_limit=self.mm_iqv_down_limit,
                                                   inventory_rb_iqv_ratio=self.mm_inventory_rb_iqv_ratio, quote_rb_iqv_ratio=self.mm_quote_rb_iqv_ratio,
                                                   vol_lower_threshold=self.auto_mm_vol_lower_threshold, vol_upper_threshold=self.auto_mm_vol_upper_threshold,
                                                   init_vol=(self.auto_mm_vol_lower_threshold + self.auto_mm_vol_upper_threshold) / 2)
+                            print(Fore.YELLOW + 'Successfully initialized Auto-Mode Market-Maker Client.')
 
                 if self.hedge_client == None:
-                    self.hedge_client = Hedge(exchange_client=self.hedge_ex_client, symbol=self.symbol, init_price=self.mid_price, 
+                    self.hedge_client = Hedge(exchange_client=self.hedge_ex_client, symbol=self.hedge_symbol, init_price=self.aggr_price, 
                                               passive_hedge_ratio=self.hg_passive_hedge_ratio, init_inventory_amount=self.mm_init_inventory_amount,
                                               init_quote_amount=self.mm_init_quote_amount, min_hedge_order_size=self.hg_min_hedge_order_size,
                                             active_hedge_iqv_ratio=self.hg_active_hedge_iqv_ratio, passive_hedge_sp_ratio=self.hg_passive_hedge_sp_ratio,
                                             passive_hedge_proportion=self.hg_passive_hedge_proportion, passive_hedge_refresh_iqv_ratio=self.hg_passive_hedge_refresh_iqv_ratio,
                                             passive_hedge_refresh_interval=self.hg_passive_hedge_refresh_interval, dual_sided_hedge=self.hg_dual_sided_hedge)
-                retry -= 1
-                await asyncio.sleep(5)
-    
-    async def test(self):
-        while True:
-            print(self.aggr_price)
-            print(self.mid_price)
-            await asyncio.sleep(0.0001)
+                    print(Fore.YELLOW + 'Successfully initialized Hedge Client.')
+                
+                if all([self.ex_client, self.hedge_ex_client, self.vol_client, self.mm_client, self.hedge_client]):
+                    print(Fore.YELLOW + 'Initialize All Clients Success.')
+                    break
+                else:
+                    retry -= 1
+                    await asyncio.sleep(5)     
     
     async def vol_monitor(self):
-        pass_windows = bn_klines_close_price(symbol=self.symbol, interval=self.vol_his_price_window, limit=self.vol_his_price_window_limit)
+        pass_windows = bn_klines_close_price(symbol=self.hedge_symbol, interval=self.vol_his_price_window, limit=self.vol_his_price_window_limit)
         self.vol_his_price.extend(pass_windows)
         await asyncio.sleep(self.vol_his_price_window)
 
         while not self.is_closed:
-            if self._price_security_check():
+            if self.price_security_check():
                 self.vol_his_price.append(self.mid_price)
                 self.vol_client.update(self.vol_his_price)
                 self.vol = self.vol_client.vol
                 if self.mm_mode == 'auto_mode':
                     self.mm_client.vol = self.vol
+                print(Fore.MAGENTA + f'Current Effective Volatility is: {self.vol}')
 
             await asyncio.sleep(self.vol_his_price_window)
     
@@ -228,10 +248,22 @@ class MarketMakerRunner():
         round_index = 0
         while not self.is_closed:
             # Step 1, Cancel current orders if exists
-            self.ex_client.cancel_all_spot_orders(symbol=self.symbol)
+            s = time.time()
+            if self.marketplace == 'binance_spot':
+                await self.ex_client.cancel_all_spot_orders(symbol=self.symbol)
+            elif self.marketplace == 'hyperliquid':
+                await self.ex_client.batch_cancel_orders(symbol=self.symbol, oids=self.oids)
+            else:
+                raise NotImplementedError
+            print(f'Cancel orders cost time: {time.time() - s}')
             # Step 2, Query all orders information if exists
             if len(self.oids) > 0:
-                filled_status = self.ex_client.batch_query_orders(symbol=self.symbol, orders=self.oids)
+                if self.marketplace == 'binance_spot':
+                    filled_status = await self.ex_client.batch_query_orders(symbol=self.symbol, orders=self.oids, limit=max(100, self.mm_live_order_nums))
+                elif self.marketplace == 'hyperliquid':
+                    filled_status = await self.ex_client.batch_query_orders(symbol=self.symbol, orders=self.oids, query_start_time=7200)
+                else:
+                    raise NotImplementedError
             # Step 3, Calculate current mm round position updates from filled orders
                 if len(filled_status) > 0:
                     ic = qc = 0
@@ -256,11 +288,14 @@ class MarketMakerRunner():
                 else:
                     print(Fore.BLACK + f'Round {round_index}: No Executed Orders, Current Inventory Amount: {self.inventory_amount}, Current Quote Amount: {self.quote_amount}') 
             # Step 5, Compute latest bins based on current position and volatility
+            s = time.time()
             self.mm_client.compute_current_bins(current_price=self.mid_price, cur_inventory_amount=self.inventory_amount, cur_quote_amount=self.quote_amount)   
             self.iqv_move_ratio = self.mm_client.iqv_move_ratio
             self.hedge_client.update_portfolio_status(current_price=self.aggr_price, cur_inventory_amount=self.inventory_amount, 
                                                       cur_quote_amount=self.quote_amount, iqv_move_ratio=self.iqv_move_ratio)
+            print(f'MM Bins compute time: {time.time() - s}')
             bins = self.mm_client.bins
+            print(bins)
             # Step 6, Generate next round orders and batch send
             nr_orders = []
             for ask_bin, bid_bin in zip(bins['asks'], bins['bids']):
@@ -272,16 +307,30 @@ class MarketMakerRunner():
 
                 if len(nr_orders) >= self.mm_live_order_nums:
                     break
-            self.oids = await self.ex_client.batch_put_spot_limit_orders(symbol=self.symbol, orders=nr_orders, gtx_only=True)
+            s = time.time()
+            if self.marketplace == 'binance_spot':
+                self.oids = await self.ex_client.batch_put_spot_limit_orders(symbol=self.symbol, orders=nr_orders, gtx_only=True)
+            elif self.marketplace == 'hyperliquid':
+                self.oids = await self.ex_client.batch_put_limit_orders(symbol=self.symbol, orders=nr_orders, gtx_only=True)
+            else:
+                raise NotImplementedError
+            print(f'Batch send orders cost time: {time.time() - s}')
             round_index += 1
             
             await asyncio.sleep(self.mm_update_interval)
 
     async def main(self):
+        live_price_task = asyncio.create_task(self.live_price_monitor())
+        await asyncio.sleep(1) 
+        
+        try:
+            await self.initialize_clients()
+        except Exception as e:
+            print(f"[Error] Failed to initialize clients: {e}")
+            return
+        
         _tasks = [
-            asyncio.create_task(self._price_monitor()),
-            asyncio.create_task(self._initialize_clients()),
-
+            live_price_task,  
             asyncio.create_task(self.vol_monitor()),
             asyncio.create_task(self.mm()),
             asyncio.create_task(self.hedge_client.passive_hedge_monitor()),
@@ -301,6 +350,7 @@ if __name__ == '__main__':
                 quote_token=cfg['quote_token'],
                 marketplace=cfg['marketplace'],
                 hedge_marketplace=cfg['hedge_marketplace'],
+                mm_update_interval=cfg['mm_update_interval'],
                 mm_price_up_pct_limit=cfg['mm_price_up_pct_limit'],
                 mm_price_down_pct_limit=cfg['mm_price_down_pct_limit'],
                 mm_bin_step=cfg['mm_bin_step'],
