@@ -1,10 +1,10 @@
 import json
 import asyncio
+import logging
 from websocket import create_connection
-from colorama import init, Fore
 from feeds_base import FeedsConnector
 
-init(autoreset=True)
+logger = logging.getLogger(__name__)
 
 class HypeFeedsConnector(FeedsConnector):
     def __init__(self, symbol):
@@ -20,7 +20,7 @@ class HypeFeedsConnector(FeedsConnector):
                     self.hype_ws_url,
                     sslopt={"cert_reqs": 0},
                 )
-                print(Fore.YELLOW + f'Start Hyperliquid {self.symbol.upper()} OrderBook Monitor.')
+                logger.info(f'Start Hyperliquid {self.symbol.upper()} OrderBook Monitor.')
                 sub_msg = {
                     "method": "subscribe",
                     "subscription": {
@@ -40,14 +40,14 @@ class HypeFeedsConnector(FeedsConnector):
                         # print(self.top_depth)
                     await asyncio.sleep(0.0001)
                 else:
-                    print(Fore.BLACK + f'Complete the BN {self.symbol.upper()} Spot Top Depth monitor.')
+                    logger.info(f'Complete the BN {self.symbol.upper()} Spot Top Depth monitor.')
                     return
             except Exception as e:
-                print(Fore.BLACK + f'Monitor BN {self.symbol.upper()} Spot Top Depth met error: {e}, retry.')
+                logger.warning(f'Monitor BN {self.symbol.upper()} Spot Top Depth met error: {e}, retry.')
                 retry -= 1
                 await asyncio.sleep(0.5)
         else:
-            print(Fore.BLACK + f'Failed to Monitor BN {self.symbol.upper()} Spot Top Depth after 1000 retries.')
+            logger.error(f'Failed to Monitor BN {self.symbol.upper()} Spot Top Depth after 1000 retries.')
     
     async def monitor_spot(self):
         # Use Binance Spot Aggr Trade Price as Spot mark price
@@ -63,26 +63,22 @@ class HypeFeedsConnector(FeedsConnector):
                     http_proxy_host=proxy_host,
                     http_proxy_port=proxy_port,
                 )
-                i = 0
-                print(Fore.YELLOW + f'Start Binance Spot {self.symbol.upper()} Price Monitor.')
+                logger.info(f'Start Binance Spot {self.symbol.upper()} Price Monitor.')
                 while not self.is_closed:
                     message = ws.recv()
                     message_dict = json.loads(message)
                     price = float(message_dict['p'])
                     self.spot_price = price
-                    if i % 1000 == 0:
-                        print(Fore.CYAN + f"Current Binance {self.symbol.upper()} Spot price: {price}")
-                    i += 1
                     await asyncio.sleep(0.0001)
                 else:
-                    print(Fore.BLACK + f'Complete the BN {self.symbol.upper()} Spot price monitor.')
+                    logger.info(f'Complete the BN {self.symbol.upper()} Spot price monitor.')
                     return
             except Exception as e:
-                print(Fore.BLACK + f'Monitor BN {self.symbol.upper()} Spot price met error: {e}, retry.')
+                logger.warning(f'Monitor BN {self.symbol.upper()} Spot price met error: {e}, retry.')
                 retry -= 1
                 await asyncio.sleep(0.5)
         else:
-            print(Fore.BLACK + f'Failed to Monitor BN {self.symbol.upper()} Spot price after 1000 retries.')
+            logger.error(f'Failed to Monitor BN {self.symbol.upper()} Spot price after 1000 retries.')
 
 if __name__ == '__main__':
     connector = HypeFeedsConnector('eth')
