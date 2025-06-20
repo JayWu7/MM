@@ -7,9 +7,10 @@ MARKETPLACE = "binance_spot"    # Market where MM operates
 HEDGE_MARKETPLACE = "binance_perp"  # Market used for hedging
 
 # === Market Making Parameters ===
+MM_UPDATE_INTERVAL = 10          # Interval (sec) to Update Market Maker Orders
 MM_PRICE_UP_PCT_LIMIT = 0.02     # Max price increase from center price
 MM_PRICE_DOWN_PCT_LIMIT = 0.02   # Max price drop from center price
-MM_BIN_STEP = 100                 # Price bin step level
+MM_BIN_STEP = 100                # in basis points (bps), e.g. 25 means 0.25%
 MM_INIT_INVENTORY_AMOUNT = 1.0   # Initial inventory amount
 MM_INIT_QUOTE_AMOUNT = 100000.0   # Initial quote balance
 MM_MODE = "auto"                  # MM mode: [spot, curve, bid-ask, auto]
