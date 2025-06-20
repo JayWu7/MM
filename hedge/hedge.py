@@ -1,12 +1,17 @@
 import sys
 import os
 import asyncio
+import logging
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+from exchange import Exchange
+
+logger = logging.getLogger(__name__)
+
 class Hedge():
     def __init__(self,
-                 exchange_client,
+                 exchange_client: Exchange,
                  symbol: str,
                  init_price: float,
                  passive_hedge_ratio: float, # Trigger order in two sides, autolatically hedge when there is a price crash
@@ -105,7 +110,7 @@ class Hedge():
         self.is_hedge_live = True
         self.is_on_p_hedge = False
 
-        self.trade_client = exchange_client.perp_client
+        self.trade_client = exchange_client
     
 
     def update_portfolio_status(self, current_price: float, cur_inventory_amount: float, cur_quote_amount: float, iqv_move_ratio: float) -> None:
@@ -125,7 +130,7 @@ class Hedge():
                     '''
                         Short Hedge Size Calculation Logic:
                         We aim to reduce the inventory to bring the IQV (Inventory Quote Value ratio)
-                        back to the target level (init_iqv_ratio ± active_hedge_iqv_ratio).
+                        back to the target level (iqv_move_ratio ± active_hedge_iqv_ratio).
                         
                         Let x be the amount of inventory to sell (hedge size).
                         
@@ -149,11 +154,11 @@ class Hedge():
                     assert x > 0, 'Calculate Active Hedge Size met error.'
                     _cur_active_hedge_size = - x
                     _execute_size = _cur_active_hedge_size - self.active_hedge_size
-                elif self.iqv_move_ratio < -self.active_hedge_iqv_ratio and self.hedge_side == 'two-way': # Need to increase inventory (long)
+                elif self.iqv_move_ratio < -self.active_hedge_iqv_ratio and self.dual_sided_hedge: # Need to increase inventory (long)
                     '''
                         Long Hedge Size Calculation Logic:
                         We aim to increase the inventory to bring the IQV (Inventory Quote Value ratio)
-                        back to the target level (init_iqv_ratio ± active_hedge_iqv_ratio).
+                        back to the target level (iqv_move_ratio ± active_hedge_iqv_ratio).
                         
                         Let x be the amount of inventory to buy (hedge size).
                         
@@ -187,19 +192,20 @@ class Hedge():
                     if unfilled_amount > 0:
                         await self.trade_client.put_perp_market_order(self.symbol, 'BUY' if _execute_size > 0 else 'SELL', _execute_size)
                 
-                self.active_hedge_size = _execute_size
+                self.active_hedge_size = _cur_active_hedge_size
+
                 await asyncio.sleep(1)
 
         except Exception as e:
-            print(f"Active Hedge Monitor Error: {e}")
+            logger.error(f"Active Hedge Monitor Error: {e}")
     
 
     async def passive_hedge_monitor(self) -> None:
         '''
-            Monitors and manages passive hedge orders based on IQV ratio and trigger order status.
+            Monitors and manages passive hedge orders based on IQV movement ratio and trigger order status.
 
             - If not currently in a passive hedge position:
-                - Monitors trigger orders (long and/or short depending on `dual_sided_hedge`).
+                - Monitors trigger orders (long and short /or short only depending on `dual_sided_hedge`).
                 - If a trigger order is filled, places a corresponding stop-loss (exit) order.
                 - If the IQV movement ratio returns to a neutral range (±passive_hedge_update_iqv_ratio), 
                 updates hedge trigger prices based on the current market price, and cancels + re-places both long and short trigger orders accordingly.
@@ -216,7 +222,7 @@ class Hedge():
                 if not self.is_on_p_hedge:
                     # Check Ticker Orders Status:
                     if self.dual_sided_hedge and self.passive_hedge_long_orderId:
-                        _long_to_status = self.trade_client.query_perp_order_status(self.symbol, int(self.passive_hedge_long_orderId))
+                        _long_to_status = await self.trade_client.query_perp_order_status(self.symbol, int(self.passive_hedge_long_orderId))
                         if _long_to_status['status'] == 'FILLED':
                             _filled_price = float(_long_to_status['avgPrice'])
                             assert self.passive_hedge_size == float(_long_to_status['executedQty']), 'Quantity Error in Passive Hedge Long Trigger Order'
@@ -224,12 +230,11 @@ class Hedge():
                             self.passive_hedge_long_orderId = None
                             _ph_sp_price = _filled_price * (1 - self.passive_hedge_sp_ratio)
                             self.passive_hedge_sp_orderId = await self.trade_client.put_perp_trigger_order(self.symbol, 'SELL', self.passive_hedge_size, _ph_sp_price)
-                            print(f'Passive Hedge Long Trigger Order Filled, entry price: {_filled_price}, size: {self.passive_hedge_size}.')
-                            print(f'Successfully Sent Passive Hedge Stop-Loss Order, orderId: {self.passive_hedge_sp_orderId}')
+                            logger.info(f'Passive Hedge Long Trigger Order Filled, entry price: {_filled_price}, size: {self.passive_hedge_size}.')
+                            logger.info(f'Successfully Sent Passive Hedge Stop-Loss Order, orderId: {self.passive_hedge_sp_orderId}')
                             continue
-                        
                     if self.passive_hedge_short_orderId:
-                        _short_to_status = self.trade_client.query_perp_order_status(self.symbol, int(self.passive_hedge_short_orderId))
+                        _short_to_status = await self.trade_client.query_perp_order_status(self.symbol, int(self.passive_hedge_short_orderId))
                         if _short_to_status['status'] == 'FILLED':
                             _filled_price = float(_short_to_status['avgPrice'])
                             assert self.passive_hedge_size == float(_short_to_status['executedQty']), 'Quantity Error in Passive Hedge Short Trigger Order'
@@ -237,8 +242,8 @@ class Hedge():
                             self.passive_hedge_short_orderId = None
                             _ph_sp_price = _filled_price * (1 + self.passive_hedge_sp_ratio)
                             self.passive_hedge_sp_orderId = await self.trade_client.put_perp_trigger_order(self.symbol, 'BUY', self.passive_hedge_size, _ph_sp_price)
-                            print(f'Passive Hedge Short Trigger Order Filled, entry price: {_filled_price}, size: {self.passive_hedge_size}.')
-                            print(f'Successfully Sent Passive Hedge Stop-Loss Order, orderId: {self.passive_hedge_sp_orderId}')
+                            logger.info(f'Passive Hedge Short Trigger Order Filled, entry price: {_filled_price}, size: {self.passive_hedge_size}.')
+                            logger.info(f'Successfully Sent Passive Hedge Stop-Loss Order, orderId: {self.passive_hedge_sp_orderId}')
                             continue
 
                     if -self.passive_hedge_refresh_iqv_ratio <= self.iqv_move_ratio <= self.passive_hedge_refresh_iqv_ratio:      
@@ -246,8 +251,8 @@ class Hedge():
                         self.p_hedge_short_trigger_price = self.price * (1 - self.passive_hedge_ratio)           
                         self.passive_hedge_size = self.cur_inventory_amount * self.passive_hedge_proportion
 
-                        if self.passive_hedge_long_orderId: assert self.trade_client.cancel_perp_order(self.symbol, self.passive_hedge_long_orderId), f'Cancel Long Trigger Order: {self.passive_hedge_long_orderId} failed.'
-                        if self.passive_hedge_short_orderId: assert self.trade_client.cancel_perp_order(self.symbol, self.passive_hedge_short_orderId), f'Cancel Short Trigger Order: {self.passive_hedge_short_orderId} failed.'
+                        if self.passive_hedge_long_orderId: assert await self.trade_client.cancel_perp_order(self.symbol, self.passive_hedge_long_orderId), f'Cancel Long Trigger Order: {self.passive_hedge_long_orderId} failed.'
+                        if self.passive_hedge_short_orderId: assert await self.trade_client.cancel_perp_order(self.symbol, self.passive_hedge_short_orderId), f'Cancel Short Trigger Order: {self.passive_hedge_short_orderId} failed.'
 
                         if self.dual_sided_hedge:
                             self.passive_hedge_long_orderId = await self.trade_client.put_perp_trigger_order(self.symbol, 'BUY', self.passive_hedge_size, self.p_hedge_long_trigger_price)
@@ -257,18 +262,18 @@ class Hedge():
                     elif not self.passive_hedge_short_orderId:
                         self.passive_hedge_short_orderId = await self.trade_client.put_perp_trigger_order(self.symbol, 'SELL', self.passive_hedge_size, self.p_hedge_short_trigger_price)
                 else:
-                    _sp_status = self.trade_client.query_perp_order_status(self.symbol, int(self.passive_hedge_sp_orderId))
+                    _sp_status = await self.trade_client.query_perp_order_status(self.symbol, int(self.passive_hedge_sp_orderId))
                     if _sp_status['status'] == 'FILLED':
                         _filled_price = float(_sp_status['avgPrice'])
                         assert self.passive_hedge_size == float(_sp_status['executedQty']), 'Quantity Error in Passive Hedge Stop-Loss Order'
                         self.is_on_p_hedge = False
                         self.passive_hedge_sp_orderId = None
-                        print(f'Passive Hedge Stop-Loss Order Filled, filled price: {_filled_price}, side: {_sp_status["side"]}, size: {self.passive_hedge_size}.')
+                        logger.info(f'Passive Hedge Stop-Loss Order Filled, filled price: {_filled_price}, side: {_sp_status["side"]}, size: {self.passive_hedge_size}.')
 
                 await asyncio.sleep(self.passive_hedge_refresh_interval)
 
         except Exception as e:
-            pass
+            logger.error(f'Passive Hedge met error: {e}')
     
 
 
