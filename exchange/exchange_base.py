@@ -15,8 +15,8 @@ class Exchange():
                 perp_client: Placeholder for perpetual futures trading client, initialized as None.
         '''
         self.exchange_name = exchange_name
-        self.__key = api_key
-        self.__secret = secret_key
+        self._key = api_key
+        self._secret = secret_key
         self.spot_client = None
         self.perp_client = None
 
