@@ -1,10 +1,8 @@
 import sys
 import os
 import asyncio
-import time
 from collections import deque
 import argparse
-from colorama import init, Fore
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -15,8 +13,7 @@ from exchange import BN, Hyperliquid
 from hedge.hedge import Hedge
 from configs.auth import *
 from init_config import validate_and_load_config
-
-init(autoreset=True)
+from log_config import setup_logger, color_log
 
 class MarketMakerRunner():
     def __init__(self, 
@@ -118,6 +115,8 @@ class MarketMakerRunner():
 
         self.is_closed = False
 
+        color_log('info', 'Start Running MarketMaker Runner.')
+
     
     async def live_price_monitor(self):
         _tasks = [
@@ -150,27 +149,28 @@ class MarketMakerRunner():
             return False
     
     async def initialize_clients(self) -> bool:
-            while not self.mid_price:
+            while not self.mid_price or not self.aggr_price:
                 await asyncio.sleep(1)
             retry = 10
             while True:
                 if self.ex_client == None:
                     if self.marketplace == 'binance_spot':
                         self.ex_client = BN(api_key=bn_api_key, secret_key=bn_secret_key)
-                        print(Fore.YELLOW + 'Successfully initialized Market-Maker Binance-Spot Trade Client.')
+                        color_log('info', 'Successfully initialized Market-Maker Binance-Spot Trade Client.')
                     elif self.marketplace == 'hyperliquid':
                         self.ex_client = Hyperliquid(api_key=hype_pub_key, secret_key=hype_pri_key)
-                        print(Fore.YELLOW + 'Successfully initialized Market-Maker Hyperliquid Trade Client.')
+                        color_log('info', 'Successfully initialized Market-Maker Hyperliquid Trade Client.')
                     else:
                         raise NotImplementedError
-
                 if self.hedge_ex_client == None:
                     if self.hedge_marketplace == 'binance_perp':
                         self.hedge_ex_client = BN(api_key=bn_api_key, secret_key=bn_secret_key)
-                        print(Fore.YELLOW + 'Successfully initialized Hedge Trade Client.')
+                        color_log('info', 'Successfully initialized Hedge Trade Client.')
+                    else:
+                        raise NotImplementedError
                 if self.vol_client == None:
                     self.vol_client = VolatilityEstimator(short_window=self.vol_short_window, long_window=self.vol_long_window, ewma_lambda=self.vol_ewma_lambda)
-                    print(Fore.YELLOW + 'Successfully initialized Volatility Estimator Client.')
+                    color_log('info', 'Successfully initialized Volatility Estimator Client.')
                 if self.mm_client == None:
                     if self.mid_price and self.price_security_check():
                         if self.mm_mode == 'spot':
@@ -181,7 +181,7 @@ class MarketMakerRunner():
                                                   min_order_size=self.mm_min_order_size, max_order_size=self.mm_max_order_size,
                                                   iqv_up_limit=self.mm_iqv_up_limit, iqv_down_limit=self.mm_iqv_down_limit,
                                                   inventory_rb_iqv_ratio=self.mm_inventory_rb_iqv_ratio, quote_rb_iqv_ratio=self.mm_quote_rb_iqv_ratio)
-                            print(Fore.YELLOW + 'Successfully initialized Spot-Mode Market-Maker Client.')
+                            color_log('info', 'Successfully initialized Spot-Mode Market-Maker Client.')
                         elif self.mm_mode == 'curve':
                             self.mm_client = Curve(underlying_asset=self.token, quote_asset=self.quote, init_price=self.mid_price, 
                                                   price_up_pct_limit=self.mm_price_up_pct_limit, price_down_pct_limit=self.mm_price_down_pct_limit, 
@@ -190,7 +190,7 @@ class MarketMakerRunner():
                                                   min_order_size=self.mm_min_order_size, max_order_size=self.mm_max_order_size,
                                                   iqv_up_limit=self.mm_iqv_up_limit, iqv_down_limit=self.mm_iqv_down_limit,
                                                   inventory_rb_iqv_ratio=self.mm_inventory_rb_iqv_ratio, quote_rb_iqv_ratio=self.mm_quote_rb_iqv_ratio)
-                            print(Fore.YELLOW + 'Successfully initialized Curve-Mode Market-Maker Client.')
+                            color_log('info', 'Successfully initialized Curve-Mode Market-Maker Client.')
                         elif self.mm_mode == 'bid_ask':
                             self.mm_client = BidAsk(underlying_asset=self.token, quote_asset=self.quote, init_price=self.mid_price, 
                                                   price_up_pct_limit=self.mm_price_up_pct_limit, price_down_pct_limit=self.mm_price_down_pct_limit, 
@@ -199,7 +199,7 @@ class MarketMakerRunner():
                                                   min_order_size=self.mm_min_order_size, max_order_size=self.mm_max_order_size,
                                                   iqv_up_limit=self.mm_iqv_up_limit, iqv_down_limit=self.mm_iqv_down_limit,
                                                   inventory_rb_iqv_ratio=self.mm_inventory_rb_iqv_ratio, quote_rb_iqv_ratio=self.mm_quote_rb_iqv_ratio)
-                            print(Fore.YELLOW + 'Successfully initialized BidAsk-Mode Market-Maker Client.')
+                            color_log('info', 'Successfully initialized BidAsk-Mode Market-Maker Client.')
                         elif self.mm_mode == 'auto':
                             self.mm_client = AutoMode(underlying_asset=self.token, quote_asset=self.quote, init_price=self.mid_price, 
                                                   price_up_pct_limit=self.mm_price_up_pct_limit, price_down_pct_limit=self.mm_price_down_pct_limit, 
@@ -210,19 +210,21 @@ class MarketMakerRunner():
                                                   inventory_rb_iqv_ratio=self.mm_inventory_rb_iqv_ratio, quote_rb_iqv_ratio=self.mm_quote_rb_iqv_ratio,
                                                   vol_lower_threshold=self.auto_mm_vol_lower_threshold, vol_upper_threshold=self.auto_mm_vol_upper_threshold,
                                                   init_vol=(self.auto_mm_vol_lower_threshold + self.auto_mm_vol_upper_threshold) / 2)
-                            print(Fore.YELLOW + 'Successfully initialized Auto-Mode Market-Maker Client.')
-
+                            color_log('info', 'Successfully initialized Auto-Mode Market-Maker Client.')
+                        else:
+                            raise NotImplementedError
                 if self.hedge_client == None:
-                    self.hedge_client = Hedge(exchange_client=self.hedge_ex_client, symbol=self.hedge_symbol, init_price=self.aggr_price, 
-                                              passive_hedge_ratio=self.hg_passive_hedge_ratio, init_inventory_amount=self.mm_init_inventory_amount,
-                                              init_quote_amount=self.mm_init_quote_amount, min_hedge_order_size=self.hg_min_hedge_order_size,
-                                            active_hedge_iqv_ratio=self.hg_active_hedge_iqv_ratio, passive_hedge_sp_ratio=self.hg_passive_hedge_sp_ratio,
-                                            passive_hedge_proportion=self.hg_passive_hedge_proportion, passive_hedge_refresh_iqv_ratio=self.hg_passive_hedge_refresh_iqv_ratio,
-                                            passive_hedge_refresh_interval=self.hg_passive_hedge_refresh_interval, dual_sided_hedge=self.hg_dual_sided_hedge)
-                    print(Fore.YELLOW + 'Successfully initialized Hedge Client.')
-                
+                    if self.aggr_price and self.price_security_check():
+                        self.hedge_client = Hedge(exchange_client=self.hedge_ex_client, symbol=self.hedge_symbol, init_price=self.aggr_price, 
+                                                passive_hedge_ratio=self.hg_passive_hedge_ratio, init_inventory_amount=self.mm_init_inventory_amount,
+                                                init_quote_amount=self.mm_init_quote_amount, min_hedge_order_size=self.hg_min_hedge_order_size,
+                                                active_hedge_iqv_ratio=self.hg_active_hedge_iqv_ratio, passive_hedge_sp_ratio=self.hg_passive_hedge_sp_ratio,
+                                                passive_hedge_proportion=self.hg_passive_hedge_proportion, passive_hedge_refresh_iqv_ratio=self.hg_passive_hedge_refresh_iqv_ratio,
+                                                passive_hedge_refresh_interval=self.hg_passive_hedge_refresh_interval, dual_sided_hedge=self.hg_dual_sided_hedge)
+                        color_log('info', 'Successfully initialized Hedge Client.')
+
                 if all([self.ex_client, self.hedge_ex_client, self.vol_client, self.mm_client, self.hedge_client]):
-                    print(Fore.YELLOW + 'Initialize All Clients Success.')
+                    color_log('info', 'Initialize All Clients Success.')
                     break
                 else:
                     retry -= 1
@@ -232,15 +234,17 @@ class MarketMakerRunner():
         pass_windows = bn_klines_close_price(symbol=self.hedge_symbol, interval=self.vol_his_price_window, limit=self.vol_his_price_window_limit)
         self.vol_his_price.extend(pass_windows)
         await asyncio.sleep(self.vol_his_price_window)
-
+        i = 0
         while not self.is_closed:
             if self.price_security_check():
-                self.vol_his_price.append(self.mid_price)
+                self.vol_his_price.append(self.aggr_price)
                 self.vol_client.update(self.vol_his_price)
                 self.vol = self.vol_client.vol
-                if self.mm_mode == 'auto_mode':
-                    self.mm_client.vol = self.vol
-                print(Fore.MAGENTA + f'Current Effective Volatility is: {self.vol}')
+                if self.mm_mode == 'auto':
+                    self.mm_client.update_vol(self.vol)
+                if i % 120 == 0: 
+                    color_log('market', f'Current Price: {self.aggr_price}, Current Effective Volatility: {self.vol}')
+                i += 1
 
             await asyncio.sleep(self.vol_his_price_window)
     
@@ -248,14 +252,12 @@ class MarketMakerRunner():
         round_index = 0
         while not self.is_closed:
             # Step 1, Cancel current orders if exists
-            s = time.time()
             if self.marketplace == 'binance_spot':
                 await self.ex_client.cancel_all_spot_orders(symbol=self.symbol)
             elif self.marketplace == 'hyperliquid':
                 await self.ex_client.batch_cancel_orders(symbol=self.symbol, oids=self.oids)
             else:
                 raise NotImplementedError
-            print(f'Cancel orders cost time: {time.time() - s}')
             # Step 2, Query all orders information if exists
             if len(self.oids) > 0:
                 if self.marketplace == 'binance_spot':
@@ -280,22 +282,20 @@ class MarketMakerRunner():
                     self.quote_amount += qc
                     round_avg_price = abs(qc / ic) if abs(ic) > 0 else 0
                     if ic > 0:
-                        print(Fore.GREEN + f'Round {round_index}: Buy {ic} {self.token} with Average Price: {round_avg_price}, Current Inventory Amount: {self.inventory_amount}, Current Quote Amount: {self.quote_amount}')
+                        color_log('success', f'Round {round_index}: Buy {ic} {self.token} with Average Price: {round_avg_price}, Current Inventory Amount: {self.inventory_amount}, Current Quote Amount: {self.quote_amount}')
                     elif ic < 0:
-                        print(Fore.GREEN + f'Round {round_index}: Sell {ic} {self.token} with Average Price: {round_avg_price}, Current Inventory Amount: {self.inventory_amount}, Current Quote Amount: {self.quote_amount}')
+                        color_log('success', f'Round {round_index}: Sell {ic} {self.token} with Average Price: {round_avg_price}, Current Inventory Amount: {self.inventory_amount}, Current Quote Amount: {self.quote_amount}')
                     else:
-                        print(Fore.BLACK + f'Round {round_index}: No Inventory Changes, Current Inventory Amount: {self.inventory_amount}, Current Quote Amount: {self.quote_amount}')
+                        color_log('success', f'Round {round_index}: No Inventory Changes, Current Inventory Amount: {self.inventory_amount}, Current Quote Amount: {self.quote_amount}')
                 else:
-                    print(Fore.BLACK + f'Round {round_index}: No Executed Orders, Current Inventory Amount: {self.inventory_amount}, Current Quote Amount: {self.quote_amount}') 
+                    color_log('status', f'Round {round_index}: No Executed Orders, Current Inventory Amount: {self.inventory_amount}, Current Quote Amount: {self.quote_amount}')
             # Step 5, Compute latest bins based on current position and volatility
-            s = time.time()
             self.mm_client.compute_current_bins(current_price=self.mid_price, cur_inventory_amount=self.inventory_amount, cur_quote_amount=self.quote_amount)   
             self.iqv_move_ratio = self.mm_client.iqv_move_ratio
             self.hedge_client.update_portfolio_status(current_price=self.aggr_price, cur_inventory_amount=self.inventory_amount, 
                                                       cur_quote_amount=self.quote_amount, iqv_move_ratio=self.iqv_move_ratio)
-            print(f'MM Bins compute time: {time.time() - s}')
             bins = self.mm_client.bins
-            print(bins)
+            # print(bins)
             # Step 6, Generate next round orders and batch send
             nr_orders = []
             for ask_bin, bid_bin in zip(bins['asks'], bins['bids']):
@@ -307,14 +307,12 @@ class MarketMakerRunner():
 
                 if len(nr_orders) >= self.mm_live_order_nums:
                     break
-            s = time.time()
             if self.marketplace == 'binance_spot':
                 self.oids = await self.ex_client.batch_put_spot_limit_orders(symbol=self.symbol, orders=nr_orders, gtx_only=True)
             elif self.marketplace == 'hyperliquid':
                 self.oids = await self.ex_client.batch_put_limit_orders(symbol=self.symbol, orders=nr_orders, gtx_only=True)
             else:
                 raise NotImplementedError
-            print(f'Batch send orders cost time: {time.time() - s}')
             round_index += 1
             
             await asyncio.sleep(self.mm_update_interval)
@@ -326,7 +324,7 @@ class MarketMakerRunner():
         try:
             await self.initialize_clients()
         except Exception as e:
-            print(f"[Error] Failed to initialize clients: {e}")
+            color_log('error', f"Failed to initialize clients: {e}")
             return
         
         _tasks = [
@@ -342,9 +340,14 @@ class MarketMakerRunner():
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Start MarketMaker Runner with provided config file.")
     parser.add_argument("--config_file", "-c", required=True, help="Name of the config .py file in [MM/configs/]")
+    parser.add_argument("--log_file", "-l", default="./tracks/mm.log", help="Path to the log file (default: ./tracks/mm.log)"
+)
     args = parser.parse_args()
 
+    setup_logger(args.log_file)
+
     cfg = validate_and_load_config(args.config_file)
+
     runner = MarketMakerRunner(
                 underlying_token=cfg['underlying_token'],
                 quote_token=cfg['quote_token'],
