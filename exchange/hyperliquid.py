@@ -1,5 +1,5 @@
-import asyncio
 import time
+import logging
 import eth_account
 from eth_account.signers.local import LocalAccount
 from hyperliquid.exchange import Exchange as HypeEx
@@ -7,6 +7,8 @@ from hyperliquid.info import Info
 from hyperliquid.utils.signing import OrderRequest, CancelRequest
 from exchange_base import Exchange
 from hyperliquid_settings import tick_size, step_size
+
+logger = logging.getLogger(__name__)
 
 class Hyperliquid(Exchange):
     def __init__(self, api_key: str, secret_key: str):
@@ -81,7 +83,7 @@ class Hyperliquid(Exchange):
                         if 'resting' in status:
                             order_ids.append(str(status['resting']['oid']))
         except Exception as e:
-            print(f'Error met in {self.exchange_name} batch_put_limit_order: {e}')
+            logger.error(f'Error met in {self.exchange_name} batch_put_limit_order: {e}')
         
         return order_ids
             
@@ -113,7 +115,7 @@ class Hyperliquid(Exchange):
                     result[order_id] = (side, size, quote_size)
             return result
         except Exception as e:
-            print(f'Failed to fetch orders filled info for {symbol}: {e}')
+            logger.error(f'Failed to fetch orders filled info for {symbol}: {e}')
             return result
 
     async def batch_cancel_orders(self, symbol: str, oids: list) -> bool:
@@ -129,5 +131,5 @@ class Hyperliquid(Exchange):
             else:
                 return True
         except Exception as e:
-            print(f'Error met in {self.exchange_name} cancel_all_spot_orders: {e}' )
+            logger.error(f'Error met in {self.exchange_name} cancel_all_spot_orders: {e}')
             return False
