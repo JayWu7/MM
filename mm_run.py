@@ -282,13 +282,13 @@ class MarketMakerRunner():
                     self.quote_amount += qc
                     round_avg_price = abs(qc / ic) if abs(ic) > 0 else 0
                     if ic > 0:
-                        color_log('success', f'Round {round_index}: Buy {ic} {self.token} with Average Price: {round_avg_price}, Current Inventory Amount: {self.inventory_amount}, Current Quote Amount: {self.quote_amount}')
+                        color_log('success', f'Round {round_index}: Buy {ic} {self.token} with Average Price: {round_avg_price}, Current Inventory: {self.inventory_amount}, Quote: {self.quote_amount}, IQVM: {self.iqv_move_ratio}')
                     elif ic < 0:
-                        color_log('success', f'Round {round_index}: Sell {ic} {self.token} with Average Price: {round_avg_price}, Current Inventory Amount: {self.inventory_amount}, Current Quote Amount: {self.quote_amount}')
+                        color_log('success', f'Round {round_index}: Sell {ic} {self.token} with Average Price: {round_avg_price}, Current Inventory: {self.inventory_amount}, Quote: {self.quote_amount}, IQVM: {self.iqv_move_ratio}')
                     else:
-                        color_log('success', f'Round {round_index}: No Inventory Changes, Current Inventory Amount: {self.inventory_amount}, Current Quote Amount: {self.quote_amount}')
+                        color_log('success', f'Round {round_index}: No Inventory Changes, Current Inventory: {self.inventory_amount}, Quote: {self.quote_amount}, IQVM: {self.iqv_move_ratio}')
                 else:
-                    color_log('status', f'Round {round_index}: No Executed Orders, Current Inventory Amount: {self.inventory_amount}, Current Quote Amount: {self.quote_amount}')
+                    color_log('status', f'Round {round_index}: No Executed Orders, Current Inventory: {self.inventory_amount}, Quote: {self.quote_amount}, IQVM: {self.iqv_move_ratio}')
             # Step 5, Compute latest bins based on current position and volatility
             self.mm_client.compute_current_bins(current_price=self.mid_price, cur_inventory_amount=self.inventory_amount, cur_quote_amount=self.quote_amount)   
             self.iqv_move_ratio = self.mm_client.iqv_move_ratio
